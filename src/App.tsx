@@ -197,7 +197,7 @@ export default function Home() {
       let url = "";
       if (scheme === 2) {
         setIsKokoroLoading(true);
-        const { generateKokoroAudioBlob } = await import('../lib/kokoroEngine');
+        const { generateKokoroAudioBlob } = await import('./lib/kokoroEngine');
         const blob = await generateKokoroAudioBlob(text, voice);
         url = URL.createObjectURL(blob);
         setIsKokoroLoading(false);
@@ -239,7 +239,7 @@ export default function Home() {
       
       if (scheme === 2) {
         setIsKokoroLoading(true);
-        const { generateKokoroAudioBlob } = await import('../lib/kokoroEngine');
+        const { generateKokoroAudioBlob } = await import('./lib/kokoroEngine');
         blob = await generateKokoroAudioBlob(sentence, voice);
         setIsKokoroLoading(false);
       } else {
