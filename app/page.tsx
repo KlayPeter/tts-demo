@@ -25,6 +25,15 @@ type ChatMessage = {
 };
 
 const OPENAI_VOICES = ["alloy", "nova", "shimmer", "echo", "fable", "onyx"];
+const OPENAI_VOICE_NAMES: Record<string, string> = {
+  "alloy": "沉稳中性-Alloy",
+  "nova": "活力女声-Nova",
+  "shimmer": "温柔女声-Shimmer",
+  "echo": "温暖男声-Echo",
+  "fable": "叙事英音-Fable",
+  "onyx": "低沉男声-Onyx"
+};
+
 const EDGE_VOICES = [
   "en-US-AriaNeural",
   "en-US-GuyNeural",
@@ -32,6 +41,31 @@ const EDGE_VOICES = [
   "zh-CN-XiaoxiaoNeural",
   "zh-CN-YunxiNeural"
 ];
+const EDGE_VOICE_NAMES: Record<string, string> = {
+  "en-US-AriaNeural": "美音女声-Aria",
+  "en-US-GuyNeural": "美音男声-Guy",
+  "en-GB-SoniaNeural": "英音女声-Sonia",
+  "zh-CN-XiaoxiaoNeural": "中文女声-晓晓",
+  "zh-CN-YunxiNeural": "中文男声-云希"
+};
+
+const KOKORO_VOICES = [
+  "af_heart",
+  "af_bella",
+  "am_adam",
+  "am_michael",
+  "bf_emma",
+  "bm_george"
+];
+
+const KOKORO_VOICE_NAMES: Record<string, string> = {
+  "af_heart": "美音女声-Heart (默认)",
+  "af_bella": "美音女声-Bella",
+  "am_adam": "美音男声-Adam",
+  "am_michael": "美音男声-Michael",
+  "bf_emma": "英音女声-Emma",
+  "bm_george": "英音男声-George"
+};
 
 const STREAM_PRESETS = [
   {
@@ -67,11 +101,12 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<"standard" | "stream">("standard");
 
   const [scheme, setScheme] = useState<1 | 2 | 3>(1); // 1: Cloud API, 2: Kokoro, 3: Fish Speech
-  const [provider, setProvider] = useState<"edge" | "openai">("edge");
+  const [provider, setProvider] = useState<"edge" | "openai" | "kokoro">("edge");
   const [voice, setVoice] = useState(EDGE_VOICES[0]);
   
   const [text, setText] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isKokoroLoading, setIsKokoroLoading] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   
@@ -88,12 +123,17 @@ export default function Home() {
   const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    if (provider === "openai" && !OPENAI_VOICES.includes(voice)) {
-      setVoice(OPENAI_VOICES[0]);
-    } else if (provider === "edge" && !EDGE_VOICES.includes(voice)) {
-      setVoice(EDGE_VOICES[0]);
+    if (scheme === 2) {
+      if (!KOKORO_VOICES.includes(voice)) setVoice(KOKORO_VOICES[0]);
+      setProvider("kokoro");
+    } else {
+      if (provider === "openai" && !OPENAI_VOICES.includes(voice)) {
+        setVoice(OPENAI_VOICES[0]);
+      } else if (provider === "edge" && !EDGE_VOICES.includes(voice)) {
+        setVoice(EDGE_VOICES[0]);
+      }
     }
-  }, [provider, voice]);
+  }, [provider, voice, scheme]);
 
   const [globalError, setGlobalError] = useState<string | null>(null);
 
@@ -154,16 +194,24 @@ export default function Home() {
     let success = false;
 
     try {
-      const response = await fetch("/api/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, voice, provider }),
-      });
+      let url = "";
+      if (scheme === 2) {
+        setIsKokoroLoading(true);
+        const { generateKokoroAudioBlob } = await import('../lib/kokoroEngine');
+        const blob = await generateKokoroAudioBlob(text, voice);
+        url = URL.createObjectURL(blob);
+        setIsKokoroLoading(false);
+      } else {
+        const response = await fetch("/api/tts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text, voice, provider }),
+        });
 
-      if (!response.ok) throw new Error(`Error: ${response.status}`);
-
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
+        if (!response.ok) throw new Error(`Error: ${response.status}`);
+        const blob = await response.blob();
+        url = URL.createObjectURL(blob);
+      }
       const audio = new Audio(url);
       audioRef.current = audio;
       
@@ -187,13 +235,28 @@ export default function Home() {
     if (!sentence.trim()) return;
     try {
       const startTime = Date.now();
-      const res = await fetch("/api/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: sentence, voice, provider })
-      });
-      if (res.ok) {
-        const blob = await res.blob();
+      let blob;
+      
+      if (scheme === 2) {
+        setIsKokoroLoading(true);
+        const { generateKokoroAudioBlob } = await import('../lib/kokoroEngine');
+        blob = await generateKokoroAudioBlob(sentence, voice);
+        setIsKokoroLoading(false);
+      } else {
+        const res = await fetch("/api/tts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: sentence, voice, provider })
+        });
+        if (res.ok) {
+          blob = await res.blob();
+        } else {
+          logActivity(sentence, Date.now() - startTime, false);
+          return;
+        }
+      }
+
+      if (blob) {
         const url = URL.createObjectURL(blob);
         audioQueue.current.push(url);
         logActivity(sentence, Date.now() - startTime, true);
@@ -384,50 +447,60 @@ export default function Home() {
                     className="bg-slate-950 border border-slate-700 text-sm rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-emerald-500/50 outline-none text-slate-200 transition-all cursor-pointer"
                   >
                     <option value={1}>方案一: Cloud API</option>
-                    <option value={2}>方案二: Kokoro (待接入)</option>
+                    <option value={2}>方案二: Kokoro (本地推理)</option>
                     <option value={3}>方案三: Fish Speech (待接入)</option>
                   </select>
                 </div>
 
-                {scheme === 1 && (
+                {(scheme === 1 || scheme === 2) && (
                   <div className="flex flex-wrap items-center gap-4 ml-auto">
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs text-slate-500">引擎</label>
-                      <div className="flex bg-slate-950 rounded-lg border border-slate-800 p-0.5">
-                        <button
-                          onClick={() => {setProvider("edge"); cleanupAll();}}
-                          className={cn("text-xs px-3 py-1.5 rounded-md transition-colors", provider === "edge" ? "bg-emerald-600 text-white" : "text-slate-400 hover:text-slate-200")}
-                        >
-                          Edge TTS
-                        </button>
-                        <button
-                          onClick={() => {setProvider("openai"); cleanupAll();}}
-                          className={cn("text-xs px-3 py-1.5 rounded-md transition-colors", provider === "openai" ? "bg-emerald-600 text-white" : "text-slate-400 hover:text-slate-200")}
-                        >
-                          OpenAI
-                        </button>
+                    {scheme === 1 && (
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-slate-500">引擎</label>
+                        <div className="flex bg-slate-950 rounded-lg border border-slate-800 p-0.5">
+                          <button
+                            onClick={() => {setProvider("edge"); cleanupAll();}}
+                            className={cn("text-xs px-3 py-1.5 rounded-md transition-colors", provider === "edge" ? "bg-emerald-600 text-white" : "text-slate-400 hover:text-slate-200")}
+                          >
+                            Edge TTS
+                          </button>
+                          <button
+                            onClick={() => {setProvider("openai"); cleanupAll();}}
+                            className={cn("text-xs px-3 py-1.5 rounded-md transition-colors", provider === "openai" ? "bg-emerald-600 text-white" : "text-slate-400 hover:text-slate-200")}
+                          >
+                            OpenAI
+                          </button>
+                        </div>
                       </div>
-                    </div>
+                    )}
 
                     <div className="flex items-center gap-2">
                       <label className="text-xs text-slate-500">音色</label>
                       <select 
                         value={voice}
                         onChange={(e) => setVoice(e.target.value)}
-                        className="bg-slate-950 border border-slate-700 text-sm rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-emerald-500/50 outline-none text-slate-200 transition-all cursor-pointer w-[140px]"
+                        className="bg-slate-950 border border-slate-700 text-sm rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-emerald-500/50 outline-none text-slate-200 transition-all cursor-pointer w-[180px]"
                       >
-                        {(provider === "edge" ? EDGE_VOICES : OPENAI_VOICES).map(v => (
-                          <option key={v} value={v}>{v.replace("Neural", "").replace(/.*-/, "")} ({v})</option>
-                        ))}
+                        {(scheme === 2 ? KOKORO_VOICES : (provider === "edge" ? EDGE_VOICES : OPENAI_VOICES)).map(v => {
+                          let label = v;
+                          if (scheme === 2) {
+                            label = KOKORO_VOICE_NAMES[v] || v;
+                          } else if (provider === "edge") {
+                            label = EDGE_VOICE_NAMES[v] || v.replace("Neural", "").replace(/.*-/, "");
+                          } else if (provider === "openai") {
+                            label = OPENAI_VOICE_NAMES[v] || v;
+                          }
+                          return <option key={v} value={v}>{label} ({v})</option>;
+                        })}
                       </select>
                     </div>
                   </div>
                 )}
               </div>
 
-              {scheme !== 1 && (
+              {scheme === 3 && (
                 <div className="mt-4 p-3 rounded-xl bg-slate-950 border border-slate-800 border-dashed text-center text-sm text-slate-500">
-                  该方案仅保留接口，当前不可用，请切换回方案一。
+                  该方案仅保留接口，当前不可用，请切换回可用方案。
                 </div>
               )}
             </div>
@@ -490,10 +563,10 @@ export default function Home() {
                 <div className="flex items-center gap-4 bg-slate-900/30 p-4 rounded-2xl border border-slate-800/50">
                   <button
                     onClick={handleStandardPlay}
-                    disabled={isLoading || !text.trim() || scheme !== 1}
+                    disabled={isLoading || !text.trim() || scheme === 3}
                     className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-500 text-white px-6 py-3 rounded-xl font-medium transition-all shadow-lg shadow-emerald-900/20"
                   >
-                    {isLoading ? <><Loader2 className="w-5 h-5 animate-spin" /> 合成中...</> : <><Play className="w-5 h-5" fill="currentColor" /> 生成并播放</>}
+                    {isKokoroLoading ? <><Loader2 className="w-5 h-5 animate-spin" /> 加载模型中...</> : isLoading ? <><Loader2 className="w-5 h-5 animate-spin" /> 合成中...</> : <><Play className="w-5 h-5" fill="currentColor" /> 生成并播放</>}
                   </button>
 
                   <button
@@ -528,7 +601,7 @@ export default function Home() {
                     <button
                       key={idx}
                       type="button"
-                      disabled={isChatGenerating || scheme !== 1}
+                      disabled={isChatGenerating || scheme === 3}
                       onClick={() => handleStreamChat(preset.question)}
                       className="text-xs px-3 py-1.5 rounded-full bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-emerald-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer touch-manipulation select-none active:scale-95"
                     >
@@ -566,7 +639,7 @@ export default function Home() {
                     <div className="flex items-center gap-3">
                       {isChatGenerating && <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />}
                       <span className="text-xs font-medium text-slate-400">
-                        {isPlaying ? "🎙️ 正在朗读最新句子..." : isChatGenerating ? "🧠 模型思考并输出中..." : "✅ 对话空闲"}
+                        {isKokoroLoading ? "⏳ 正在加载并初始化 Kokoro 模型..." : isPlaying ? "🎙️ 正在朗读最新句子..." : isChatGenerating ? "🧠 模型思考并输出中..." : "✅ 对话空闲"}
                       </span>
                     </div>
                     {(isChatGenerating || isPlaying) && (
