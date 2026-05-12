@@ -24,17 +24,6 @@ function getOpenAI() {
 function preprocessText(text: string): string {
   let processed = text;
   
-  const replacements: Record<string, string> = {
-    "UTG": "under the gun",
-    "BTN": "button",
-    "BB": "big blind",
-    "SB": "small blind",
-    "CO": "cutoff",
-    "3bet": "three bet",
-    "4bet": "four bet",
-    "bb": "big blinds"
-  };
-
   processed = processed.replace(/\b3bet\b/gi, "three bet");
   processed = processed.replace(/\b4bet\b/gi, "four bet");
 
